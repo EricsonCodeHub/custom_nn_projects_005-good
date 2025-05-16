@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
+from torch.utils.data import DataLoader, TensorDataset
 
 # Create output directory
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -29,7 +30,7 @@ class PowerBiasActivation(nn.Module):
         return torch.pow(abs_x, self.weights) - torch.pow(self.biases, self.biases)
 
 class TimeSeriesPowerNN(nn.Module):
-    def __init__(self, input_window_size=720, hidden_size=20):
+    def __init__(self, input_window_size=30, hidden_size=20):
         super().__init__()
         # First layer processes each time step independently
         self.fc1 = nn.Linear(1, hidden_size)
@@ -60,9 +61,9 @@ class TimeSeriesPowerNN(nn.Module):
         x = x.reshape(batch_size, -1)  # (batch_size, input_window_size * hidden_size)
         return self.fc3(x)
 
-def train_phase(model, device, x_train, y_train, 
+def train_phase(model, device, train_loader, 
                 train_weights=True, train_biases=True, 
-                epochs=3000, lr=0.01, phase_name=""):
+                epochs=10, lr=0.01, phase_name=""):
     
     # Freeze/unfreeze parameters based on phase
     for name, param in model.named_parameters():
@@ -78,21 +79,29 @@ def train_phase(model, device, x_train, y_train,
         filter(lambda p: p.requires_grad, model.parameters()), 
         lr=lr
     )
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=300)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
     
     losses = []
     for epoch in range(epochs):
-        optimizer.zero_grad()
-        outputs = model(x_train)
-        loss = criterion(outputs, y_train)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        scheduler.step(loss)
+        epoch_loss = 0.0
+        for batch_idx, (x_batch, y_batch) in enumerate(train_loader):
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(x_batch)
+            loss = criterion(outputs, y_batch)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            
+            epoch_loss += loss.item()
+            
+            if batch_idx % 1000 == 0:
+                print(f'{phase_name} Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}')
         
-        losses.append(loss.item())
-        if epoch % 500 == 0:
-            print(f'{phase_name} Epoch {epoch}, Loss: {loss.item():.4f}')
+        scheduler.step(epoch_loss/len(train_loader))
+        losses.append(epoch_loss/len(train_loader))
+        print(f'{phase_name} Epoch {epoch}, Avg Loss: {losses[-1]:.4f}')
     
     # Plot and save training curve
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -110,51 +119,58 @@ def main():
     print(f"Using device: {device}")
     
     # Load the prepared tensors
-    X_tensor = torch.load("tensor_data/inputs.pt").to(device)
-    y_tensor = torch.load("tensor_data/targets.pt").to(device)
+    X_tensor = torch.load("tensor_data/inputs.pt")
+    y_tensor = torch.load("tensor_data/targets.pt")
     
     print(f"Loaded input tensor shape: {X_tensor.shape}")
     print(f"Loaded target tensor shape: {y_tensor.shape}")
     
-    # Create model (input window size should match your data)
-    model = TimeSeriesPowerNN(input_window_size=30, hidden_size=30).to(device)
+    # Create dataset and dataloader with smaller batch size
+    dataset = TensorDataset(X_tensor, y_tensor)
+    batch_size = 1024  # Reduced batch size to fit in memory
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    # Create model
+    model = TimeSeriesPowerNN(input_window_size=30, hidden_size=20).to(device)
     
     # PHASE 1: Train only weights (biases fixed at 1)
     print("\n=== PHASE 1: Training weights only ===")
     phase1_loss = train_phase(
-        model, device, X_tensor, y_tensor,
+        model, device, train_loader,
         train_weights=True, 
         train_biases=False,
-        epochs=3000,
+        epochs=5,  # Reduced epochs for demonstration
         phase_name="Weights_Only"
     )
     
     # PHASE 2: Train only biases (weights fixed)
     print("\n=== PHASE 2: Training biases only ===")
     phase2_loss = train_phase(
-        model, device, X_tensor, y_tensor,
+        model, device, train_loader,
         train_weights=False,
         train_biases=True,
-        epochs=3000,
+        epochs=5,
         phase_name="Biases_Only"
     )
     
     # PHASE 3: Joint training
     print("\n=== PHASE 3: Joint training ===")
     phase3_loss = train_phase(
-        model, device, X_tensor, y_tensor,
+        model, device, train_loader,
         train_weights=True,
         train_biases=True,
-        epochs=4000,
+        epochs=10,
         phase_name="Joint_Training"
     )
     
     # Final evaluation
     model.eval()
     with torch.no_grad():
-        # Evaluate on the training set
-        y_pred = model(X_tensor).cpu().numpy()
-        y_true = y_tensor.cpu().numpy()
+        # Evaluate on a subset of the training set
+        test_samples = 1000
+        x_test = X_tensor[:test_samples].to(device)
+        y_true = y_tensor[:test_samples].numpy()
+        y_pred = model(x_test).cpu().numpy()
         
         # Plot some sample predictions
         for i in range(3):  # Plot first 3 examples
