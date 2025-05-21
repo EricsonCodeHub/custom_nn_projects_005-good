@@ -1,0 +1,85 @@
+import torch
+
+# Seed for reproducibility
+torch.manual_seed(42)
+
+# Input tensor X: shape (1, 3), represents a single input vector
+X = torch.tensor([[1.0, 2.0, 3.0]])     # Batch size = 1, input size = 3
+
+# Target output tensor y_true: shape (1, 1), expected value for the input
+y_true = torch.tensor([[1.0]])         # Batch size = 1, output size = 1
+
+# Initialize weight matrix for Layer 1: shape (3, 3)
+# This transforms the input from size 3 to hidden size 3
+W1 = torch.randn(3, 3)                 # Weight matrix for first layer
+
+# Initialize bias for Layer 1: shape (1, 3)
+b1 = torch.randn(1, 3)                 # Bias vector for first layer
+
+# Initialize weight matrix for Layer 2: shape (3, 1)
+# This transforms from hidden size 3 to output size 1
+W2 = torch.randn(3, 1)                 # Weight matrix for second layer (output)
+
+# Initialize bias for Layer 2: shape (1, 1)
+b2 = torch.randn(1, 1)                 # Bias vector for second layer
+
+# Hyperparameters
+lr = 0.01                              # Learning rate for gradient descent
+epochs = 200                           # Number of training steps
+
+# Training loop
+for epoch in range(epochs):
+    # ----- FORWARD PASS -----
+
+    # Linear transformation for Layer 1: z1 = X @ W1 + b1
+    # Shape: (1, 3) @ (3, 3) + (1, 3) = (1, 3)
+    z1 = X @ W1 + b1
+    a1 = z1  # No activation (purely linear)
+
+    # Linear transformation for Layer 2: z2 = a1 @ W2 + b2
+    # Shape: (1, 3) @ (3, 1) + (1, 1) = (1, 1)
+    z2 = a1 @ W2 + b2
+    a2 = z2  # Final output of the network
+
+    # ----- LOSS CALCULATION -----
+
+    # Mean squared error: (prediction - target)^2
+    loss = torch.mean((a2 - y_true) ** 2)
+
+    # ----- BACKWARD PASS (manual gradients) -----
+
+    # Gradient of loss with respect to output a2
+    # dL/da2 = 2 * (a2 - y_true)
+    dL_da2 = 2 * (a2 - y_true)               # Shape: (1, 1)
+
+    # Gradient w.r.t. W2: dL/dW2 = a1.T @ dL_da2
+    # Shape: (3, 1) = (3, 1) @ (1, 1)
+    dL_dW2 = a1.T @ dL_da2
+
+    # Gradient w.r.t. b2: just equal to dL_da2 (broadcasted over batch)
+    dL_db2 = dL_da2                          # Shape: (1, 1)
+
+    # Gradient w.r.t. a1 (for layer 1): dL/da1 = dL_da2 @ W2.T
+    # Shape: (1, 3) = (1, 1) @ (1, 3)
+    dL_da1 = dL_da2 @ W2.T
+
+    # Gradient w.r.t. W1: dL/dW1 = X.T @ dL_da1
+    # Shape: (3, 3) = (3, 1) @ (1, 3)
+    dL_dW1 = X.T @ dL_da1
+
+    # Gradient w.r.t. b1: same as dL_da1
+    dL_db1 = dL_da1                          # Shape: (1, 3)
+
+    # ----- PARAMETER UPDATE -----
+
+    # Apply gradient descent to update weights and biases
+    W2 -= lr * dL_dW2
+    b2 -= lr * dL_db2
+    W1 -= lr * dL_dW1
+    b1 -= lr * dL_db1
+
+    # ----- LOGGING -----
+
+    # Print loss every 20 epochs or on the final one
+    if epoch % 20 == 0 or epoch == epochs - 1:
+        print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
